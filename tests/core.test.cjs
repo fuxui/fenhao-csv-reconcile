@@ -1,0 +1,14 @@
+const {test}=require('node:test');
+const a=require('node:assert/strict');
+let C; try { C=require('../core.js'); } catch { C={}; }
+test('核心接口存在',()=>a.equal(typeof C.parseCSV,'function'));
+test('验收样例和精确差额',()=>{const A=C.validate(C.parseCSV('编号,金额\nT001,1000.00\nT002,-120.50\nT003,-99.00\nT004,30.00'),0,1);const B=C.validate(C.parseCSV('编号,金额\nT001,1000.00\nT002,-125.50\nT004,30.00\nT005,-60.00'),0,1);const r=C.compare(A,B);a.deepEqual(r.counts,{same:2,different:1,onlyA:1,onlyB:1});a.equal(r.totalA,81050n);a.equal(r.totalB,84450n);a.equal(r.totalA-r.totalB,-3400n);a.equal(r.rows.find(x=>x.id==='T002').diff,500n)});
+test('中文引号逗号换行及物理行号',()=>{const t=C.parseCSV('\uFEFF编号,金额,备注\r\n001,0.10,"中文,\r\n他说""好"""\r\n002,0.20,末行\r\n');a.equal(t.rows[0].line,2);a.equal(t.rows[1].line,4);a.equal(t.rows[0].cells[2],'中文,\r\n他说"好"');const v=C.validate(t,0,1);a.equal(v.entries[0].id,'001');a.equal(v.total,30n)});
+test('金额定点负数零极大值',()=>{a.equal(C.amount('0.10')+C.amount('0.20'),30n);a.equal(C.amount('-120.50'),-12050n);a.equal(C.amount('+0'),0n);a.equal(C.amount('9999999999999999.99'),999999999999999999n);a.equal(C.money(-3400n),'-34.00')});
+test('非法金额被拒绝',()=>{for(const s of ['','NaN','1e3','1,000','￥1','1.001','Infinity','1.','--1','10000000000000000','１２'])a.throws(()=>C.amount(s))});
+test('CSV空文件标题格式被拒绝',()=>{for(const s of ['', '\uFEFF','id','id,id\na,1',',amount\na,1','id,amount','id,amount\na','id,amount\na,1,2','id,amount\n"a,1','id,amount\na"b,1','id,amount\n"a" x,1','id,amount\n\n'])a.throws(()=>C.parseCSV(s))});
+test('重复空编号阻止结果',()=>{for(const s of ['id,amount\n a ,1\na,2','id,amount\n,1','id,amount\na,no']){const v=C.validate(C.parseCSV(s),0,1);a.ok(v.errors.length);a.throws(()=>C.compare(v,v))}});
+test('同一列或无效映射被拒绝',()=>{const t=C.parseCSV('id,amount\na,1');a.throws(()=>C.validate(t,0,0));a.throws(()=>C.validate(t,-1,1));a.throws(()=>C.validate(t,0,9))});
+test('10k边界',()=>{const s='id,amount\n'+Array.from({length:10000},(_,i)=>`${i},0.01`).join('\n');const v=C.validate(C.parseCSV(s),0,1);a.equal(v.total,10000n);a.throws(()=>C.parseCSV(s+'\n10000,0.01'))});
+test('导出BOM引号和公式防护，编号文本',()=>{const v=C.validate(C.parseCSV('id,amount\n=SUM(A1),-1\n001,2'),0,1);const other=C.validate(C.parseCSV('id,amount\nx,0'),0,1);const csv=C.exportCSV(C.compare(v,other),true);a.ok(csv.startsWith('\uFEFF'));a.ok(csv.includes("'=SUM(A1)"));a.ok(csv.includes("'001"));a.ok(csv.includes("'-1.00"));for(const s of ['=1','+1','-1','@x','\t=1','\r=1','\n=1',' \t=1','＝1'])a.ok(C.safeCell(s).startsWith("'"))});
+test('仅差异与全部导出，原始行记录不变',()=>{const t=C.parseCSV('id,amount\na,1\nb,2');const before=JSON.stringify(t);const v=C.validate(t,0,1);const r=C.compare(v,v);a.equal(r.rows.length,2);a.equal(C.parseCSV(C.exportCSV(r,false)).rows.length,2);a.equal(C.exportCSV(r,true).split('\r\n').length,2);a.equal(JSON.stringify(t),before)});
